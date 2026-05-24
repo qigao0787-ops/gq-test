@@ -1,6 +1,6 @@
 """
-知识库索引模块
-加载所有 Markdown 文件 → 分段 → TF-IDF 索引 → 余弦相似度搜索
+知识库索引模块 (优化版)
+支持: 英文技术术语精确匹配 + CamelCase拆分 + 标题加权
 """
 import os
 import re
@@ -12,8 +12,6 @@ from config import KNOWLEDGE_BASE_DIR, TOP_K_RESULTS, MIN_RELEVANCE_SCORE
 
 
 class KnowledgeIndex:
-    """知识库索引"""
-
     def __init__(self, knowledge_dir=None):
         self.knowledge_dir = knowledge_dir or KNOWLEDGE_BASE_DIR
         self.sections = []
@@ -72,11 +70,24 @@ class KnowledgeIndex:
         return text.strip()
 
     def _tokenize(self, text):
+        # 提取英文技术术语(保持完整,不被jieba切碎)
+        english_words = re.findall(r'[A-Za-z][A-Za-z0-9_\-\.]+', text)
+        english_tokens = []
+        for w in english_words:
+            english_tokens.append(w.lower())
+            # CamelCase 拆分: ThreadLocal → thread, local
+            parts = re.findall(r'[A-Z][a-z]+|[a-z]+|[A-Z]+', w)
+            english_tokens.extend(p.lower() for p in parts if len(p) > 1)
+
+        # 中文部分用jieba分词
         words = jieba.cut(text)
         stop_words = {'的', '了', '是', '在', '和', '有', '就', '不', '也', '都',
                       '到', '说', '要', '会', '对', '这', '那', '个', '为', '什么',
-                      '怎么', '如何', '可以', '能', '吗', '呢', '啊', '吧', '么'}
-        return ' '.join(w for w in words if len(w) > 1 and w not in stop_words)
+                      '怎么', '如何', '可以', '能', '吗', '呢', '啊', '吧', '么',
+                      '一个', '使用', '通过', '进行', '以及', '或者', '但是'}
+        chinese_tokens = [w for w in words if len(w) > 1 and w not in stop_words]
+
+        return ' '.join(chinese_tokens + english_tokens)
 
     def _build_tfidf(self):
         corpus = [self._tokenize(s["clean_text"]) for s in self.sections]
@@ -87,9 +98,32 @@ class KnowledgeIndex:
         if not query or not self.sections:
             return []
         top_k = top_k or TOP_K_RESULTS
+
+        # TF-IDF 相似度
         query_tokenized = self._tokenize(query)
         query_vec = self.vectorizer.transform([query_tokenized])
         scores = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+
+        # 标题/内容精确匹配加权(大幅提升准确率)
+        query_lower = query.lower()
+        query_english = re.findall(r'[A-Za-z][A-Za-z0-9_]+', query)
+
+        for i, section in enumerate(self.sections):
+            title_lower = section['title'].lower()
+            content_lower = section['clean_text'].lower()
+
+            # 标题包含查询词 → 大幅加权
+            if query_lower in title_lower:
+                scores[i] += 0.5
+            # 内容包含完整查询词
+            elif query_lower in content_lower:
+                scores[i] += 0.3
+            # 英文术语精确匹配(ThreadLocal/HashMap等)
+            for qw in query_english:
+                if qw.lower() in title_lower or qw.lower() in content_lower:
+                    scores[i] += 0.4
+                    break
+
         top_indices = np.argsort(scores)[::-1][:top_k]
         results = []
         for idx in top_indices:
@@ -100,15 +134,15 @@ class KnowledgeIndex:
                 "title": self.sections[idx]["title"],
                 "content": self.sections[idx]["content"],
                 "file": self.sections[idx]["file"],
-                "score": float(score)
+                "score": float(min(score, 1.0))
             })
         return results
 
 
 if __name__ == "__main__":
     index = KnowledgeIndex()
-    test_queries = ["HashMap底层原理", "TCP三次握手", "Redis分布式锁", "G1垃圾收集器"]
+    test_queries = ["ThreadLocal", "HashMap底层原理", "TCP三次握手", "Redis分布式锁", "volatile"]
     for q in test_queries:
         print(f"\n🔍 {q}")
         for r in index.search(q):
-            print(f"  [{r['file']}] {r['title']} ({r['score']:.2%})")
+            print(f"  [{r['file']}] {r['title']} ({r['score']:.0%})")
