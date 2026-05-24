@@ -6,7 +6,14 @@ import os
 
 # ============ 路径配置 ============
 # 知识库目录 (你的面试md文件所在目录)
-KNOWLEDGE_BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "document")
+# 自动找到 interview-assistant 同级的 document 目录
+KNOWLEDGE_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(os.path.dirname(__file__))), "document")
+
+# 如果上面的路径找不到，尝试当前工作目录的上级
+if not os.path.exists(KNOWLEDGE_BASE_DIR):
+    KNOWLEDGE_BASE_DIR = os.path.join(os.path.dirname(os.getcwd()), "document")
+if not os.path.exists(KNOWLEDGE_BASE_DIR):
+    KNOWLEDGE_BASE_DIR = os.path.join(os.getcwd(), "..", "document")
 
 # ============ Web 服务配置 ============
 # 本地 Web 服务端口 (手机浏览器访问 http://电脑IP:端口)
