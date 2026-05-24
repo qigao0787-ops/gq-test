@@ -1,0 +1,21 @@
+# 面试语音辅助工具依赖
+
+# 语音识别 (本地离线，无需API)
+faster-whisper>=1.0.0
+
+# 录音
+sounddevice>=0.4.6
+numpy>=1.24.0
+
+# 中文分词 + 搜索
+jieba>=0.42.1
+scikit-learn>=1.3.0
+
+# UI (Tkinter 系统自带，不需要安装)
+# 如果系统没有 tkinter:
+# Ubuntu: sudo apt-get install python3-tk
+# Mac: brew install python-tk
+
+# 可选: 如果想用在线API替代本地whisper (更快但需网络)
+# openai-whisper>=20231117
+# openai>=1.0.0
