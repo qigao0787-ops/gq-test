@@ -72,11 +72,27 @@ class KnowledgeIndex:
         return text.strip()
 
     def _tokenize(self, text):
+        # 先提取英文单词/技术术语(保持原样,不被jieba切碎)
+        import re
+        english_words = re.findall(r'[A-Za-z][A-Za-z0-9_\-\.]+', text)
+        # 把英文术语的各种大小写形式都加进去
+        english_tokens = []
+        for w in english_words:
+            english_tokens.append(w.lower())
+            # CamelCase 拆分: ThreadLocal → thread, local
+            parts = re.findall(r'[A-Z][a-z]+|[a-z]+|[A-Z]+', w)
+            english_tokens.extend(p.lower() for p in parts if len(p) > 1)
+
+        # 中文部分用jieba分词
         words = jieba.cut(text)
         stop_words = {'的', '了', '是', '在', '和', '有', '就', '不', '也', '都',
                       '到', '说', '要', '会', '对', '这', '那', '个', '为', '什么',
-                      '怎么', '如何', '可以', '能', '吗', '呢', '啊', '吧', '么'}
-        return ' '.join(w for w in words if len(w) > 1 and w not in stop_words)
+                      '怎么', '如何', '可以', '能', '吗', '呢', '啊', '吧', '么',
+                      '一个', '使用', '通过', '进行', '以及', '或者', '但是'}
+        chinese_tokens = [w for w in words if len(w) > 1 and w not in stop_words]
+
+        all_tokens = chinese_tokens + english_tokens
+        return ' '.join(all_tokens)
 
     def _build_tfidf(self):
         corpus = [self._tokenize(s["clean_text"]) for s in self.sections]
@@ -87,9 +103,30 @@ class KnowledgeIndex:
         if not query or not self.sections:
             return []
         top_k = top_k or TOP_K_RESULTS
+
+        # TF-IDF 相似度搜索
         query_tokenized = self._tokenize(query)
         query_vec = self.vectorizer.transform([query_tokenized])
         scores = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+
+        # 标题/关键词精确匹配加权(大幅提升准确率)
+        query_lower = query.lower()
+        for i, section in enumerate(self.sections):
+            title_lower = section['title'].lower()
+            content_lower = section['clean_text'].lower()
+            # 标题包含查询词 → 加大权重
+            if query_lower in title_lower:
+                scores[i] += 0.5
+            # 内容中出现完整查询词 → 加权
+            elif query_lower in content_lower:
+                scores[i] += 0.3
+            # 英文术语精确匹配(不区分大小写)
+            import re
+            query_words = re.findall(r'[A-Za-z][A-Za-z0-9_]+', query)
+            for qw in query_words:
+                if qw.lower() in title_lower or qw.lower() in content_lower:
+                    scores[i] += 0.4
+
         top_indices = np.argsort(scores)[::-1][:top_k]
         results = []
         for idx in top_indices:
@@ -100,7 +137,7 @@ class KnowledgeIndex:
                 "title": self.sections[idx]["title"],
                 "content": self.sections[idx]["content"],
                 "file": self.sections[idx]["file"],
-                "score": float(score)
+                "score": float(min(score, 1.0))
             })
         return results
 
